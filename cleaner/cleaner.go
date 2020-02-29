@@ -4,12 +4,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
+	"path"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
-	"unicode/utf16"
-	"unsafe"
 )
 
 const BACKUP_DIR_NAME = "被删除的文件"
@@ -17,6 +15,7 @@ const BACKUP_DIR_NAME = "被删除的文件"
 var allDelCount int32
 var allFileCount int32
 var allDirCount int32
+var ignoreCount int32
 
 func DoClean() {
 	t := time.Now()
@@ -27,12 +26,12 @@ func DoClean() {
 	logrus.Infof("总耗时%v", time.Since(t))
 }
 
-func dirWalk(path string) {
-	if strings.Contains(path, BACKUP_DIR_NAME) {
+func dirWalk(dirPath string) {
+	if strings.Contains(dirPath, BACKUP_DIR_NAME) {
 		return
 	}
-	log := logrus.WithField("目录", path)
-	hidden, err := isFileHidden(path)
+	log := logrus.WithField("目录", dirPath)
+	hidden, err := isFileHidden(dirPath)
 	if err != nil {
 		log.WithError(err).Info("isFileHidden")
 	}
@@ -40,7 +39,7 @@ func dirWalk(path string) {
 		return
 	}
 
-	fs, err := ioutil.ReadDir(path)
+	fs, err := ioutil.ReadDir(dirPath)
 	if err != nil {
 		logrus.Panic(err)
 	}
@@ -49,10 +48,14 @@ func dirWalk(path string) {
 	hash2files := make(map[string][]os.FileInfo, 0)
 	for _, file := range fs {
 		if file.IsDir() {
-			dirWalk(path + file.Name() + "/")
+			dirWalk(dirPath + file.Name() + "/")
 		} else {
-			name := path + file.Name()
-			md5, err := MD5File(name)
+			if path.Ext(file.Name()) == ".log" {
+				atomic.AddInt32(&ignoreCount, 1)
+				continue
+			}
+			name := dirPath + file.Name()
+			md5, err := md5File(name)
 			if err != nil {
 				logrus.Panic(err)
 			}
@@ -81,9 +84,9 @@ func dirWalk(path string) {
 				log.WithField("filename", file.Name()).Info("保留")
 				continue
 			}
-			backupDir := "./" + BACKUP_DIR_NAME + "/" + path[2:]
+			backupDir := "./" + BACKUP_DIR_NAME + "/" + dirPath[2:]
 			createDirIfNoExist(backupDir)
-			err = os.Rename(path+file.Name(), backupDir+file.Name())
+			err = os.Rename(dirPath+file.Name(), backupDir+file.Name())
 			if err != nil {
 				logrus.Panic(err)
 			}
@@ -96,31 +99,4 @@ func dirWalk(path string) {
 	if delCount > 0 {
 		log.Infof("%d个文件被移除", delCount)
 	}
-}
-
-func createDirIfNoExist(path string) {
-	_, err := os.Stat(path) //os.Stat获取文件信息
-	if err != nil {
-		if os.IsNotExist(err) {
-			os.MkdirAll(path, os.ModePerm) //  Everyone can read write and execute
-			return
-		}
-		return
-	}
-}
-
-func isFileHidden(path string) (bool, error) {
-
-	name := utf16.Encode([]rune(path + "\x00"))
-
-	attributes, err := syscall.GetFileAttributes((*uint16)(unsafe.Pointer(&name[0])))
-
-	if err != nil {
-
-		return false, err
-
-	}
-
-	return attributes&syscall.FILE_ATTRIBUTE_HIDDEN != 0, nil
-
 }
