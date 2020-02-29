@@ -5,7 +5,9 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -13,14 +15,19 @@ import (
 const BACKUP_DIR_NAME = "被删除的文件"
 
 var allDelCount int32
+var allFileCount int32
+var allDirCount int32
 
 func DoClean() {
+	t := time.Now()
 	dirWalk("./")
-	logrus.Infof("总共有%d个重复文件被移除", allDelCount)
+	logrus.Infof("总扫描文件数:%d", allFileCount)
+	logrus.Infof("总扫描文件夹数:%d", allDirCount)
+	logrus.Infof("总重复文件被删除数:%d", allDelCount)
+	logrus.Infof("总耗时%v", time.Since(t))
 }
 
 func dirWalk(path string) {
-
 	if strings.Contains(path, BACKUP_DIR_NAME) {
 		return
 	}
@@ -37,6 +44,8 @@ func dirWalk(path string) {
 	if err != nil {
 		logrus.Panic(err)
 	}
+	atomic.AddInt32(&allDirCount, 1)
+
 	hash2files := make(map[string][]os.FileInfo, 0)
 	for _, file := range fs {
 		if file.IsDir() {
@@ -48,6 +57,8 @@ func dirWalk(path string) {
 				logrus.Panic(err)
 			}
 			hash2files[md5] = append(hash2files[md5], file)
+
+			atomic.AddInt32(&allFileCount, 1)
 		}
 	}
 
@@ -77,7 +88,7 @@ func dirWalk(path string) {
 				logrus.Panic(err)
 			}
 			delCount++
-			allDelCount++
+			atomic.AddInt32(&allDelCount, 1)
 			log.WithField("filename", file.Name()).Info("删除")
 		}
 	}
